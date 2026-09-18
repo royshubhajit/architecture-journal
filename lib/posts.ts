@@ -44,10 +44,10 @@ async function saveLocalPosts(posts: Post[]) {
 }
 async function getBlobPosts(): Promise<Post[] | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
-  const result = await list({ prefix: "data/posts.json", limit: 1 });
-  const record = result.blobs.find(blob => blob.pathname === "data/posts.json");
+  const result = await list({ prefix: "data/posts", limit: 100 });
+  const record = result.blobs.filter(blob => blob.pathname.endsWith(".json")).sort((a,b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())[0];
   if (!record) return null;
-  const response = await fetch(`${record.url}?v=${record.uploadedAt.getTime()}`, { cache: "no-store" });
+  const response = await fetch(record.url, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not read published posts.");
   return response.json() as Promise<Post[]>;
 }
@@ -60,14 +60,23 @@ export async function getPosts(includeDrafts = false): Promise<Post[]> {
   return posts.filter(p => includeDrafts || p.status === "published").sort((a,b) => +new Date(b.publishedAt) - +new Date(a.publishedAt));
 }
 export async function getPost(slug: string, includeDrafts = false) { return (await getPosts(includeDrafts)).find(p => p.slug === slug); }
-export async function savePost(input: Pick<Post, "title"|"excerpt"|"content"|"topic"|"status"> & { slug?: string; coverImage?: string; coverAlt?: string }) {
+async function persistPosts(posts: Post[]) {
   const db = redis();
+  if (db) await db.set("architecture-journal:posts", posts);
+  else if (process.env.BLOB_READ_WRITE_TOKEN) await put(`data/posts/${Date.now()}.json`, JSON.stringify(posts), { access: "public", contentType: "application/json", cacheControlMaxAge: 60 });
+  else await saveLocalPosts(posts);
+}
+export async function savePost(input: Pick<Post, "title"|"excerpt"|"content"|"topic"|"status"> & { slug?: string; originalSlug?: string; coverImage?: string; coverAlt?: string }) {
   const posts = await getPosts(true); const now = new Date().toISOString(); const slug = input.slug || slugify(input.title);
-  const old = posts.find(p => p.slug === slug);
-  const post: Post = { ...input, slug, publishedAt: old?.publishedAt || now, updatedAt: now, readingMinutes: estimateMinutes(input.content) };
-  const next = [post, ...posts.filter(p => p.slug !== slug)];
-  if (db) await db.set("architecture-journal:posts", next);
-  else if (process.env.BLOB_READ_WRITE_TOKEN) await put("data/posts.json", JSON.stringify(next), { access: "public", allowOverwrite: true, contentType: "application/json", cacheControlMaxAge: 60 });
-  else await saveLocalPosts(next);
+  const old = posts.find(p => p.slug === (input.originalSlug || slug));
+  const { originalSlug: _originalSlug, ...postInput } = input;
+  void _originalSlug;
+  const post: Post = { ...postInput, slug, publishedAt: old?.publishedAt || now, updatedAt: now, readingMinutes: estimateMinutes(input.content) };
+  const next = [post, ...posts.filter(p => p.slug !== slug && p.slug !== input.originalSlug)];
+  await persistPosts(next);
   return post;
+}
+export async function deletePost(slug: string) {
+  const posts = await getPosts(true);
+  await persistPosts(posts.filter(post => post.slug !== slug));
 }
