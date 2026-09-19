@@ -44,8 +44,10 @@ async function saveLocalPosts(posts: Post[]) {
 }
 async function getBlobPosts(): Promise<Post[] | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
-  const result = await list({ prefix: "data/posts", limit: 100 });
-  const record = result.blobs.filter(blob => blob.pathname.endsWith(".json")).sort((a,b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())[0];
+  let result = await list({ prefix: "data/posts", limit: 1000 });
+  const blobs = [...result.blobs];
+  while (result.hasMore) { result = await list({prefix:"data/posts", limit:1000, cursor:result.cursor}); blobs.push(...result.blobs); }
+  const record = blobs.filter(blob => blob.pathname.endsWith(".json")).sort((a,b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())[0];
   if (!record) return null;
   const response = await fetch(record.url, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not read published posts.");
@@ -56,7 +58,7 @@ export function estimateMinutes(text: string) { return Math.max(1, Math.ceil(tex
 export async function getPosts(includeDrafts = false): Promise<Post[]> {
   const db = redis();
   const stored = db ? await db.get<Post[]>("architecture-journal:posts") : process.env.BLOB_READ_WRITE_TOKEN ? await getBlobPosts() : await getLocalPosts();
-  const posts = stored?.length ? stored : seed;
+  const posts = stored ?? seed;
   return posts.filter(p => includeDrafts || p.status === "published").sort((a,b) => +new Date(b.publishedAt) - +new Date(a.publishedAt));
 }
 export async function getPost(slug: string, includeDrafts = false) { return (await getPosts(includeDrafts)).find(p => p.slug === slug); }
@@ -67,7 +69,8 @@ async function persistPosts(posts: Post[]) {
   else await saveLocalPosts(posts);
 }
 export async function savePost(input: Pick<Post, "title"|"excerpt"|"content"|"topic"|"status"> & { slug?: string; originalSlug?: string; coverImage?: string; coverAlt?: string }) {
-  const posts = await getPosts(true); const now = new Date().toISOString(); const slug = input.slug || slugify(input.title);
+  const posts = await getPosts(true); const now = new Date().toISOString(); let slug = input.originalSlug || input.slug || slugify(input.title) || `article-${Date.now()}`;
+  if (!input.originalSlug && !input.slug) { const base=slug; let suffix=2; while(posts.some(post=>post.slug===slug)) slug=`${base}-${suffix++}`; }
   const old = posts.find(p => p.slug === (input.originalSlug || slug));
   const { originalSlug: _originalSlug, ...postInput } = input;
   void _originalSlug;

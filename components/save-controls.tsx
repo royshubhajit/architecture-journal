@@ -1,0 +1,3 @@
+"use client";
+import { useFormStatus } from "react-dom";
+export function SaveControls({published,busy}:{published:boolean;busy:boolean}){const {pending}=useFormStatus();return <div className="save-controls"><span>{pending?"Saving your article…":published?"Changes become live when you save.":"Drafts are only visible to you."}</span>{!published&&<button type="submit" className="quiet" name="intent" value="draft" disabled={pending||busy}>Save draft</button>}<button type="submit" name="intent" value="published" disabled={pending||busy}>{pending?"Saving…":published?"Save changes":"Publish now"}</button></div>;}
