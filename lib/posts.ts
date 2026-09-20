@@ -68,13 +68,14 @@ async function persistPosts(posts: Post[]) {
   else if (process.env.BLOB_READ_WRITE_TOKEN) await put(`data/posts/${Date.now()}.json`, JSON.stringify(posts), { access: "public", contentType: "application/json", cacheControlMaxAge: 60 });
   else await saveLocalPosts(posts);
 }
-export async function savePost(input: Pick<Post, "title"|"excerpt"|"content"|"topic"|"status"> & { slug?: string; originalSlug?: string; coverImage?: string; coverAlt?: string }) {
+export async function savePost(input: Pick<Post, "title"|"excerpt"|"content"|"topic"|"status"> & { slug?: string; originalSlug?: string; coverImage?: string; coverAlt?: string; contentFormat?: Post["contentFormat"] }) {
   const posts = await getPosts(true); const now = new Date().toISOString(); let slug = input.originalSlug || input.slug || slugify(input.title) || `article-${Date.now()}`;
   if (!input.originalSlug && !input.slug) { const base=slug; let suffix=2; while(posts.some(post=>post.slug===slug)) slug=`${base}-${suffix++}`; }
   const old = posts.find(p => p.slug === (input.originalSlug || slug));
   const { originalSlug: _originalSlug, ...postInput } = input;
   void _originalSlug;
-  const post: Post = { ...postInput, slug, publishedAt: old?.publishedAt || now, updatedAt: now, readingMinutes: estimateMinutes(input.content) };
+  const readableContent = input.contentFormat === "html" ? input.content.replace(/<[^>]+>/g, " ") : input.content;
+  const post: Post = { ...postInput, slug, publishedAt: old?.publishedAt || now, updatedAt: now, readingMinutes: estimateMinutes(readableContent) };
   const next = [post, ...posts.filter(p => p.slug !== slug && p.slug !== input.originalSlug)];
   await persistPosts(next);
   return post;
